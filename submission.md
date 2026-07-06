@@ -214,9 +214,9 @@ code for the details.
 
 ## 7. Root cause analysis — how each bug was reproduced
 
-For each of the three chosen bugs, the **"how I reproduced it"** field records the exact inputs,
-sequence of actions, and data condition that triggered the reported behavior. (Full root causes
-and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
+For each bug, the **"how I reproduced it"** field records the exact inputs, sequence of actions,
+and data condition that triggered the reported behavior. (Full root causes and fixes are in
+[BUG_REPORT.md](BUG_REPORT.md).)
 
 > **Workflow note (AI usage).** Each entry follows the same discipline: *I* located the suspicious
 > code first (by tracing the call chain — §8), then used AI to explain what that code does, then
@@ -235,6 +235,15 @@ and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 - **Why it read as intermittent:** through the live API it only reproduces on an actual UTC Sunday (the code reads the wall clock), so it silently ate one day of streak per week.
 - **AI's role:** after I isolated the `elif days_since_last == 1 and today.weekday() != 6` line, AI explained that `weekday() == 6` is Sunday and that the `and` clause therefore suppresses the increment. I verified by reading the branch and running the Sat→Sun transition — diagnosis confirmed against actual output, not taken on assertion.
 
+### Issue #2 — "Friends Listening Now" shows people from yesterday
+
+- **Buggy code path:** `GET /feed/<id>/listening-now` → `get_friends_listening_now`, which filters `ListeningEvent.listened_at >= now - RECENT_THRESHOLD` where `RECENT_THRESHOLD = timedelta(hours=24)`.
+- **Inputs:** a viewer with at least one friend, and friend `ListeningEvent` rows whose `listened_at` is older than "a moment ago" but within the last 24 hours.
+- **Sequence of actions:** (1) a friend listens to a song hours ago → a `ListeningEvent` is persisted; (2) the viewer requests `listening-now`; (3) that hours-old listen still appears, as if it were current.
+- **Data condition that triggers it:** any friend event in the window `(now − 24h, now]`. A listen from, say, 5 hours ago passes the `>= now − 24h` filter and leaks into "now." The seed data supplies exactly this — recent events (10–20 min) *and* stale ones (2h–4.5 days).
+- **How I reproduced it:** added a friend event ~5 hours old and called `get_friends_listening_now` — with the 24h window it was returned (the reported bug). After narrowing to `timedelta(minutes=30)`, I verified **both sides of the boundary**: a 29-min-old event is shown, a 31-min-old event is hidden, and `get_activity_feed` (which does *not* use the threshold) still returns the stale event — confirming the change is scoped to the intended feed.
+- **AI's role:** after tracing the route to `get_friends_listening_now`, AI pointed to the module-level `RECENT_THRESHOLD` constant as the window governing "recent." I verified by reading the filter and running the 29-/31-minute boundary cases — the fix is a value change, confirmed by observation.
+
 ### Issue #3 — Same song shows up twice in search
 
 - **Buggy code path:** `GET /songs/search?q=...` → `search_songs`, the `outerjoin(song_tags)` with no de-duplication.
@@ -244,6 +253,15 @@ and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 - **How I reproduced it (and why it's inconsistent):** ran the same filtered query three ways against a 3-tag song — underlying joined rows = **3**, legacy `Query.all()` (what the code uses) = **1**, 2.0 `select(...).scalars().all()` = **3**. The DB really produces duplicates, but SQLAlchemy's legacy `Query` de-duplicates full entities by identity, masking them. So the bug is **latent**: it surfaces only if results are consumed without entity-uniquing (selecting columns, adding a second entity, or migrating to `select()` without `.unique()`). That consumption-dependence is exactly why the duplicates were reported as inconsistent.
 - **AI's role (the cautionary one):** reading the `outerjoin` with no `.distinct()`, AI's first-pass diagnosis was the *plausible but wrong* answer — "this returns duplicate rows, so search shows duplicates." Only by running the query myself did the real behavior appear: the ORM silently de-dups, so the bug is latent, not active. This is the case study for why the diagnosis must be verified by execution, not accepted because it sounds right.
 
+### Issue #4 — Notified when a friend adds your song to a playlist, but not when they rate it
+
+- **Buggy code path:** `POST /songs/<id>/rate` → `rate()` → `rate_song`. The function persists the `Rating` and commits, but there is **no `create_notification` call** — unlike its sibling `add_to_playlist` in the same module, which does notify.
+- **Inputs:** a rater and a song shared by a *different* user.
+- **Sequence of actions:** (1) Nova shares a song; (2) Darius rates it via `POST /songs/<id>/rate`; (3) Nova opens `GET /users/<nova>/notifications` — nothing is there.
+- **Data condition that triggers it:** **no special condition** — every rate of another user's song fails to notify (deterministic). The one correct silence is rating your *own* song (`song.shared_by == user_id`), which should not notify.
+- **How I reproduced it:** called `rate_song(darius, song, 5)` for a song shared by Nova, then `get_notifications(nova)` → **0** results, while the same setup routed through `add_to_playlist` produced **1**. That side-by-side contrast confirmed the missing side effect. After the fix, the rate produces one `song_rated` notification; re-rating (the upsert path) still notifies without error.
+- **AI's role:** the symptom itself names two actions (playlist-add works, rate doesn't), so the trace was a **comparison**. Reading `add_to_playlist` and `rate_song` side by side in `notification_service.py` showed `create_notification` present in one and absent in the other. This is a case where tracing top-down (§10.4) mattered: the instinct "the notification code is broken" would send you into `create_notification`, which is fine — the bug is a *missing call*, not broken code.
+
 ### Issue #5 — Last song in a playlist never shows
 
 - **Buggy code path:** `GET /playlists/<id>/songs` → `get_playlist_songs`, the `return [... for song in songs[:-1]]` slice.
@@ -252,6 +270,15 @@ and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 - **Data condition that triggers it:** **no special condition** — the `[:-1]` slice unconditionally drops the last ordered entry. Verified across sizes: 0 songs → `[]` (correct by accident), 1 song → `[]` (the only song dropped), 3 songs → `['Track1','Track2']` (last one missing).
 - **How I reproduced it:** built playlists of 0/1/3 songs and applied the original slice; also caught immediately by `test_playlist_returns_all_songs` (returned 4, expected 5) and `test_playlist_returns_songs_in_order` (missing `Track 5`). This is the deterministic contrast to #1 and #3 — it fires on every request, no clock or tag state required.
 - **AI's role:** minimal — once I read the `return [... for song in songs[:-1]]` line, the `[:-1]` is self-evidently the defect; no AI explanation was needed beyond confirming Python slice semantics. Verified by the two failing playlist tests. (A reminder that not every bug needs the assistant — the reading did the work here.)
+
+### Issue #6 — `add_to_playlist` crashes on a new add (found via testing, not a user report)
+
+- **Buggy code path:** `POST /playlists/<id>/songs` → `add_song()` → `add_to_playlist`, which did `playlist.songs.append(song)`. That inserts a `playlist_entries` row through the ORM relationship, but the association table has NOT-NULL `position` and `added_by` columns the append cannot supply.
+- **Inputs:** a valid playlist, a valid song **not already in that playlist**, and an adder user.
+- **Sequence of actions:** (1) create a playlist; (2) `POST` a genuinely new song to it; (3) the insert raises `sqlite3.IntegrityError: NOT NULL constraint failed: playlist_entries.position` — surfacing as an unhandled 500 (the route only catches `ValueError`).
+- **Data condition that triggers it:** the song must be a **new add** (`song not in playlist.songs`). If the song is **already present**, the dedup guard skips the append and there is *no* crash — which is exactly why `seed_data.py` (which inserts `playlist_entries` rows manually) and the "re-add" path never hit it.
+- **How I reproduced it:** it first appeared while writing `tests/test_notifications.py` — exercising `add_to_playlist` for a new song threw the `IntegrityError`. I then reproduced it in isolation with a three-line script (create playlist → `add_to_playlist(new_song)` → exception) to confirm it wasn't a test-setup artifact.
+- **AI's role:** this bug was **not** found by reading — the code looked correct. It fell out of *writing a test that actually calls the function*. Once it threw, reading `models.py` connected the ORM `.append()` to the association table's NOT-NULL columns, pinpointing the cause. The fix uses an explicit `playlist_entries.insert()` that supplies `position = max + 1` and `added_by`.
 
 ---
 
