@@ -115,6 +115,10 @@ where all six bugs from the hunt lived.
 This is the end-to-end path for one of the app's core social features (and the one Issue #4 was
 about). Say **Darius rates a song that Nova shared**.
 
+![Sequence diagram — Darius POSTs a rating; routes/songs.py calls rate_song, which validates, upserts the Rating and commits, then (since the sharer is not the rater) calls create_notification and commits; later Nova GETs her notifications and sees "darius rated your song 5/5"](data-flow-rating.png)
+
+*Source: [`data-flow-rating.drawio`](data-flow-rating.drawio) (editable in draw.io; [`data-flow-rating.svg`](data-flow-rating.svg) for a vector copy).*
+
 ```
 POST /songs/<song_id>/rate     body: { "user_id": <darius>, "score": 5 }
   │
