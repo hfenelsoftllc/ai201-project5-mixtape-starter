@@ -218,6 +218,13 @@ For each of the three chosen bugs, the **"how I reproduced it"** field records t
 sequence of actions, and data condition that triggered the reported behavior. (Full root causes
 and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 
+> **Workflow note (AI usage).** Each entry follows the same discipline: *I* located the suspicious
+> code first (by tracing the call chain — §8), then used AI to explain what that code does, then
+> **verified the diagnosis by reading the code and running it myself.** The reverse order — asking
+> AI to "find the bug" before reading the relevant code — reliably produces answers that are
+> *plausible but wrong* (see Issue #3's `AI's role`). The **AI's role** line on each bug records
+> where the assistant helped and where I did the verifying.
+
 ### Issue #1 — Listening streak keeps resetting
 
 - **Buggy code path:** `POST /songs/<id>/listen` → `record_listening_event` → `update_listening_streak`, at the branch `elif days_since_last == 1 and today.weekday() != 6`.
@@ -226,6 +233,7 @@ and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 - **Data condition that triggers it:** the new listen's date is a **Sunday** (`today.weekday() == 6`), evaluated in **UTC**, *and* the gap is exactly 1 day. The `and today.weekday() != 6` clause then short-circuits false, the increment is skipped, and control falls to `else: streak = 1`.
 - **How I reproduced it:** reconstructed the original branch in a script and ran three consecutive-day transitions — `Mon→Tue` streak 1→2 ✅, `Sat→Sun` streak 1→**1** 🐛, `Sun→Mon` streak 1→2 ✅. Also confirmed by the pre-existing `test_streak_increments_on_sunday`, which failed `assert 1 == 2` before the fix.
 - **Why it read as intermittent:** through the live API it only reproduces on an actual UTC Sunday (the code reads the wall clock), so it silently ate one day of streak per week.
+- **AI's role:** after I isolated the `elif days_since_last == 1 and today.weekday() != 6` line, AI explained that `weekday() == 6` is Sunday and that the `and` clause therefore suppresses the increment. I verified by reading the branch and running the Sat→Sun transition — diagnosis confirmed against actual output, not taken on assertion.
 
 ### Issue #3 — Same song shows up twice in search
 
@@ -234,6 +242,7 @@ and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 - **Sequence of actions:** seed a multi-tag song (e.g. *"Crown Heights Anthem"*, 3 tags), then `GET /songs/search?q=Crown`.
 - **Data condition that triggers it:** the matched song has ≥2 rows in `song_tags`. The join emits one row per tag: 0 tags → 1 row, 1 tag → 1 row, **3 tags → 3 rows**.
 - **How I reproduced it (and why it's inconsistent):** ran the same filtered query three ways against a 3-tag song — underlying joined rows = **3**, legacy `Query.all()` (what the code uses) = **1**, 2.0 `select(...).scalars().all()` = **3**. The DB really produces duplicates, but SQLAlchemy's legacy `Query` de-duplicates full entities by identity, masking them. So the bug is **latent**: it surfaces only if results are consumed without entity-uniquing (selecting columns, adding a second entity, or migrating to `select()` without `.unique()`). That consumption-dependence is exactly why the duplicates were reported as inconsistent.
+- **AI's role (the cautionary one):** reading the `outerjoin` with no `.distinct()`, AI's first-pass diagnosis was the *plausible but wrong* answer — "this returns duplicate rows, so search shows duplicates." Only by running the query myself did the real behavior appear: the ORM silently de-dups, so the bug is latent, not active. This is the case study for why the diagnosis must be verified by execution, not accepted because it sounds right.
 
 ### Issue #5 — Last song in a playlist never shows
 
@@ -242,6 +251,7 @@ and fixes are in [BUG_REPORT.md](BUG_REPORT.md).)
 - **Sequence of actions:** create a playlist, add ≥1 song (seed data builds playlists of 5–7 songs), then `GET /playlists/<id>/songs` and compare `count` to what was stored.
 - **Data condition that triggers it:** **no special condition** — the `[:-1]` slice unconditionally drops the last ordered entry. Verified across sizes: 0 songs → `[]` (correct by accident), 1 song → `[]` (the only song dropped), 3 songs → `['Track1','Track2']` (last one missing).
 - **How I reproduced it:** built playlists of 0/1/3 songs and applied the original slice; also caught immediately by `test_playlist_returns_all_songs` (returned 4, expected 5) and `test_playlist_returns_songs_in_order` (missing `Track 5`). This is the deterministic contrast to #1 and #3 — it fires on every request, no clock or tag state required.
+- **AI's role:** minimal — once I read the `return [... for song in songs[:-1]]` line, the `[:-1]` is self-evidently the defect; no AI explanation was needed beyond confirming Python slice semantics. Verified by the two failing playlist tests. (A reminder that not every bug needs the assistant — the reading did the work here.)
 
 ---
 
@@ -299,3 +309,59 @@ predicts), and `models.py` was the tie-breaker whenever the fix hinged on schema
 timestamp for #1, many-to-many for #3, NOT-NULL association columns for #6). Two bugs (#3, #6)
 could not be confirmed by reading alone — they required *running* a query/test to see the
 behavior the ORM was hiding, which is the signal to stop reading and start executing.
+
+---
+
+## 9. AI tools during investigation
+
+This investigation was carried out with **Claude Code** (an agentic CLI assistant) as the AI
+tool. Being explicit about *how* it was used — and where it was wrong — is part of the honesty of
+the writeup.
+
+**Where it helped:**
+
+- **Navigation.** Reading `app.py` blueprint prefixes and following each route → service call
+  chain (the §8 method) is exactly the kind of multi-file tracing an AI assistant does quickly.
+  It located the five candidate service functions fast.
+- **Empirical harnesses.** Rather than trust the model's read of the code, it wrote throwaway
+  scripts to *execute* the suspect paths: reconstructing the original streak branch to confirm the
+  Sat→Sun reset (#1), and comparing joined-row counts across query-consumption styles for search (#3).
+- **Test authoring and running.** It ran `pytest` for a baseline (3 failed, 10 passed), and wrote
+  the two missing suites (`test_feed`, `test_notifications`) — the latter is what surfaced the
+  sixth bug.
+- **Drafting.** Fixes, atomic commit messages, and this document.
+
+**Where AI reasoning was wrong and execution corrected it — the important part:**
+
+- For **Issue #3**, the model's first-pass conclusion (from reading alone) was "the un-deduplicated
+  `outerjoin` produces duplicate rows, so search returns duplicates." Running the query showed the
+  opposite: the DB emits 3 rows but SQLAlchemy's legacy `Query` de-dups entities to 1, so no
+  duplicate ever reaches the user. The bug is **latent**, not active. A confident-sounding but
+  wrong read was caught only because the claim was executed, not trusted.
+- The **sixth bug** (`add_to_playlist` `IntegrityError`) was not predicted by reading the code as
+  correct-looking; it fell out of *writing a test that actually calls the function*.
+
+**Guardrails applied:**
+
+- Every "confirmed" verdict is backed by a run (a failing/passing test or a script), never by the
+  model's assertion. Findings that couldn't be confirmed are labeled honestly (#3 as "latent").
+- Fixes were kept minimal and scoped to each root cause; the out-of-scope sixth bug was flagged
+  and initially left as documented `xfail` tests before being fixed only after explicit sign-off.
+- All code changes were verified by the full suite (**31 passed**) before landing.
+
+**The workflow that works (and the order matters):**
+
+> **You find the suspicious code → AI helps you understand it → you verify the diagnosis by reading
+> it (and running it) yourself.**
+
+The ordering is the whole point. Asking AI to *find the bug* before you've read the relevant code
+almost always lands you somewhere **plausible but wrong** — Issue #3 is the textbook case: the
+model's cold read ("the join duplicates rows") sounded authoritative and was false. Inverting to
+"I locate the code by tracing the call chain (§8), AI explains that specific code, I confirm by
+reading and executing" is what kept every diagnosis honest. AI narrows and explains; it does not
+get the final word on behavior.
+
+**Takeaway:** the AI was most valuable for *navigation and scaffolding* (explaining code I'd
+already located, writing harnesses and tests, drafting docs) and least trustworthy for
+*conclusions about runtime behavior* — so verification was always mine to do, by reading and by
+running.
