@@ -174,6 +174,61 @@ next index and pass `added_by`), signaling the marker should be removed.
 
 ---
 
+## Data flow: how a song reaches a user's feed
+
+There is **no "add song to feed" action** — the feed is *derived on read* from `ListeningEvent`
+rows. A song appears in your feed because a **friend recorded a listening event**, and when you
+later request your feed, the service queries those events. The flow therefore spans two
+independent request cycles.
+
+**1. Write path — a friend listens (creates the data the feed reads later):**
+
+```
+POST /songs/<song_id>/listen
+  → routes/songs.py :: listen()
+    → streak_service.record_listening_event(user_id, song_id)
+        1. db.session.get(User, user_id)          # validate listener (raises ValueError if missing)
+        2. ListeningEvent(user_id, song_id, listened_at=now); db.session.add(...)
+        3. streak_service.update_listening_streak(user, now)   # side-effect: bump/reset streak
+        4. db.session.commit()                    # the event is now persisted
+```
+
+After this, a row exists in `listening_event` — nothing has touched any feed yet.
+
+**2. Read path — the viewer requests their feed (assembles it from events):**
+
+```
+GET /feed/<user_id>/listening-now
+  → routes/feed.py :: listening_now()
+    → feed_service.get_friends_listening_now(user_id)
+        1. db.session.get(User, user_id)          # validate viewer (raises ValueError if missing)
+        2. cutoff = now - RECENT_THRESHOLD        # 30-minute recency window
+        3. friend_ids = [f.id for f in user.friends]   # empty → return []
+        4. query ListeningEvent WHERE user_id IN friend_ids
+                                  AND listened_at >= cutoff
+                                  ORDER BY listened_at DESC
+        5. dedup loop — keep only the most recent event per friend:
+             for each event (newest first):
+               db.session.get(User, event.user_id)   # → friend.to_dict()
+               db.session.get(Song, event.song_id)   # → song.to_dict()
+        6. return [{friend, song, listened_at}, ...]
+```
+
+So the ordered service calls for a song to surface in a viewer's *listening-now* feed are:
+`record_listening_event` → `update_listening_streak` (write, by the friend), then later
+`get_friends_listening_now` (read, by the viewer).
+
+`get_activity_feed(user_id, limit)` follows the same read shape but **omits step 2's recency
+cutoff** and applies a `LIMIT` instead — it returns the most recent N events regardless of age.
+
+**Three conditions must all hold for the song to appear in the *listening-now* feed:**
+
+1. The listener is in the viewer's `user.friends` (friendships are stored bidirectionally — see `seed_data.py`).
+2. The event's `listened_at` is within `RECENT_THRESHOLD` (30 min) — this is [Issue #2](#findings); it was `24h`.
+3. It is the friend's **most recent** event — earlier songs by the same friend are deduped out.
+
+---
+
 ## How to Read the Code
 
 Start with `models.py` to understand the data model. Then trace a feature through from its route to its service. For example:
