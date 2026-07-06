@@ -165,3 +165,47 @@ python seed_data.py                       # populate the DB
 FLASK_APP=app:create_app flask run        # serve the API
 pytest tests/                             # 31 passed
 ```
+
+---
+
+## 6. Reflection: what a useful codebase map looks like
+
+Writing this map (and using it to hunt six bugs) made clear that a *useful* map is not a
+file-by-file inventory — a directory listing already gives you that. A useful map is the thing
+that lets a newcomer **make a correct change on day one without reading every file.** Concretely:
+
+1. **It answers "where does X live?" before you have to grep.** The single most valuable fact in
+   this whole document is one sentence: *behavior bugs live in `services/`; routes are thin.*
+   That one rule turns "read 14 files" into "read 1 service function." A good map front-loads the
+   organizing principle so the reader can navigate by rule instead of by search.
+
+2. **It traces at least one feature end-to-end.** Static structure ("here are the services") tells
+   you what exists; a *data-flow trace* ("a rate request enters here, validates there, commits,
+   then fires a notification as a side effect") tells you how the pieces actually talk. The
+   rate→notify walkthrough in §3 is worth more than the file table in §1, because most real tasks
+   are "change what happens when the user does X," and that's a flow, not a file.
+
+3. **It names the invariants and gotchas, not just the components.** The genuinely useful entries
+   are the ones you *can't* infer by skimming: `ValueError` is the error protocol between layers;
+   `to_dict()` is the serialization boundary; SQLite silently drops timezone info; association
+   tables have NOT-NULL columns that ORM `.append()` can't fill. Each of these is a landmine map —
+   knowing them prevents a class of bug. (The last one *was* a bug — the sixth one.)
+
+4. **It reflects reality, and stays honest about the messy parts.** A map that describes the
+   intended design but hides the broken corners sends readers into traps. Where behavior surprised
+   me (search de-dup being masked by the ORM; notifications not being wired to ratings), the map
+   says so and links to [BUG_REPORT.md](BUG_REPORT.md) for depth. A map you can't trust is worse
+   than none.
+
+5. **It's layered by altitude.** Overview → file table → architecture diagram → one deep flow →
+   patterns. A reader can stop at whatever depth answers their question. The point isn't to say
+   *everything*; it's to say the ~20% that unlocks the other 80%, and to point (not copy) toward
+   the detailed docs for the rest.
+
+Short version: a useful codebase map is **navigational, not encyclopedic** — it teaches the rules
+of the place, walks you through one real path, flags the tripwires, and trusts you to read the
+code for the details.
+
+> The contrast in one line: a *weak* map just lists files by name; a *useful* one says what each
+> file does **and how they connect** — structurally (which layer calls which) and behaviorally
+> (how data flows through a real request).
