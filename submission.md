@@ -365,3 +365,106 @@ get the final word on behavior.
 already located, writing harnesses and tests, drafting docs) and least trustworthy for
 *conclusions about runtime behavior* — so verification was always mine to do, by reading and by
 running.
+
+---
+
+## 10. Execution tracing strategies when you're stuck
+
+When reading the code doesn't settle a diagnosis (Issues #3 and #6 both hit this point), stop
+reading and start observing. Four techniques, ordered from cheapest to most involved, each with
+how it applies to this app:
+
+### 1. Print at the entry of the suspicious function
+Confirm the function is even called, and with the inputs you expect — before theorizing about its
+logic. For the streak bug, a temporary line at the top of `update_listening_streak` settles it
+immediately:
+
+```python
+def update_listening_streak(user, now):
+    print(f"[trace] streak={user.listening_streak} last={user.last_listened_at} "
+          f"now={now} today.weekday()={now.date().weekday()}")   # remove before commit
+```
+
+Seeing `today.weekday()==6` on the failing run points straight at the Sunday guard. (Delete such
+lines before committing.)
+
+### 2. Isolate the function in a Python shell / script
+Import the service and call it directly with controlled inputs — **faster than firing HTTP
+requests and far easier to reason about**, because you skip routing, JSON, and the wall clock.
+This is the technique this writeup relied on most:
+
+```python
+from app import create_app, db
+app = create_app({"SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:"})
+with app.app_context():
+    db.create_all()
+    from services.search_service import search_songs
+    print(search_songs("Crown"))          # #3: observe results directly
+    from services.streak_service import update_listening_streak
+    # pass an explicit `now` — reproduces the Sunday case without waiting for Sunday
+```
+
+Crucially, passing an explicit `now` sidesteps Issue #1's clock dependency entirely — you don't
+have to wait for a real Sunday to reproduce it. This is exactly how the §7 reconstructions were run.
+
+### 3. Check what the data actually looks like
+Query the database directly instead of assuming. `flask shell` pushes an app context for you:
+
+```bash
+FLASK_APP=app:create_app flask shell
+```
+```python
+>>> from models import Song, song_tags, ListeningEvent
+>>> from app import db
+>>> # #3: how many tag rows does a song actually have? (drives the join fan-out)
+>>> db.session.query(song_tags).filter(song_tags.c.song_id == "<id>").count()
+>>> # #2: what timestamps do the friends' listening events really have?
+>>> [(e.user_id, e.listened_at) for e in db.session.query(ListeningEvent).all()]
+```
+
+Seeing the real row counts / timestamps replaces "the data is probably…" with fact — and reveals
+whether the triggering state (multi-tag songs, stale events) is even present (see the seed-data
+note under Issue #1's clock dependency).
+
+### 4. Read the call chain top-down, not bottom-up
+Start at the **route**, follow each call in order, and write down what each step returns — don't
+jump to "the bug is probably in X." This is the §8 navigation method, and the discipline matters:
+for Issue #4 the instinct might be "the notification code is broken," but tracing top-down
+(`rate()` → `rate_song` → … → *no `create_notification` call at all*) shows the bug is a **missing**
+step, not a broken one — something you'd miss by diving straight into `create_notification`.
+
+**How these reinforce the §9 workflow:** techniques 1–3 are how you *verify a diagnosis by running
+it yourself*, and technique 4 is how you *find the suspicious code first*. Together they're the
+antidote to the "plausible but wrong" cold read — you never have to guess what the code does when
+you can cheaply make it tell you.
+
+---
+
+## 11. The debugging loop: verify before you fix
+
+Everything above (§8 navigation, §9 AI usage, §10 execution tracing) serves one loop:
+
+> **read → form a hypothesis → verify by running the code with specific inputs → fix.**
+
+The step that gets skipped under pressure is the third one, and skipping it is expensive:
+**fixing before verifying almost always produces a fix for the wrong cause.** The fix might even
+make the symptom go away by accident, which hides the fact that the diagnosis was wrong and leaves
+the real cause to resurface later.
+
+Two bugs in this project show why the *verify* step earns its place:
+
+- **Issue #3 — verifying changed what the fix even *means*.** The hypothesis from reading was "the
+  un-deduplicated join returns duplicates that reach the user." Fixing straight from that would
+  have shipped `.distinct()` with the commit message *"fix duplicate search results"* — a fix for
+  a cause that isn't real. Running the query first (technique §10.2) showed the ORM already
+  de-dups, so the bug is **latent**. Same one-line fix, but now correctly framed as *hardening
+  against a latent fan-out*, not repairing an active defect. The code change was identical; the
+  understanding — and the honest writeup — was not.
+- **Issue #4 — verifying pointed at a different function entirely.** The tempting hypothesis is
+  "the notification code is broken," which sends you editing `create_notification`. Tracing the
+  call chain top-down (technique §10.4) shows `create_notification` is fine — `rate_song` simply
+  never calls it. Fixing before verifying would have hunted for a bug in perfectly correct code.
+
+So the loop is not ceremony. The **verify** step is what tells you *which* code to change and
+*why* — and in this project it repeatedly moved the fix, the commit message, or the target
+function away from the first plausible guess.
