@@ -9,6 +9,53 @@ this document is the whole-project map. All six bugs found during the hunt are f
 
 ---
 
+## AI usage (read this first)
+
+I used an AI assistant (Claude Code) throughout this project. This section is an honest account of
+*how* — including where it was wrong — because the collaboration is the point, not a claim that I
+did it alone. (§9–§11 go deeper on the workflow; this is the summary.)
+
+**What I asked the AI to do:**
+
+- **Trace call chains.** "Which endpoint records a listen, and what does it call?" → it followed
+  `app.py` blueprint prefixes into `routes/songs.py` → `record_listening_event` → `update_listening_streak`.
+  This was its strongest use: fast multi-file navigation to the ~5 candidate service functions.
+- **Explain specific code I had already located.** e.g. "what does `today.weekday() != 6` do here?"
+  (it's the Sunday guard), "what governs the 'recent' window?" (`RECENT_THRESHOLD`), "what does
+  `playlist.songs.append` insert?" (a `playlist_entries` row).
+- **Summarize / draft.** The codebase map (§1–§2), commit messages, the test scaffolding, and
+  early drafts of this document.
+
+**What it genuinely helped me understand:**
+
+- The Mixtape layering — thin routes, service-owned logic — which is *why* every bug lived in
+  `services/` and how to navigate by following the action (§8).
+- SQLAlchemy specifics I'd have had to look up: how a many-to-many `outerjoin` fans out one row
+  per tag, and that association tables with extra NOT-NULL columns can't be populated by a bare
+  relationship `.append()`.
+
+**Where I had to verify myself, and where the AI was wrong or incomplete:**
+
+- **Issue #3 — the AI's explanation pointed me in the wrong direction.** Reading the un-deduplicated
+  `outerjoin`, it confidently concluded "this returns duplicate rows, so search shows duplicates."
+  That's *plausible but false.* When I ran the query myself, the DB returned 3 rows for a 3-tag
+  song but the code returned **1** — SQLAlchemy's legacy `Query` silently de-dups entities, so the
+  bug is **latent**, not active. Only executing it revealed this; the fix and its commit message
+  are framed as *hardening* because of what I found, not what the AI first said.
+- **Issue #6 — the AI didn't find it at all.** Reading `add_to_playlist`, it (and I) judged the
+  code plausible. The `IntegrityError` surfaced only when I *wrote a test that actually called the
+  function*. Reading never would have caught it.
+- **Every "confirmed" verdict is mine, backed by a run** — a failing/passing test or a throwaway
+  script — never by the assistant's assertion. Findings I couldn't confirm are labeled honestly
+  (Issue #3 as "latent").
+
+**The takeaway that shaped my workflow:** the AI was reliable for *navigation and explaining code
+I'd already found*, and unreliable for *conclusions about runtime behavior*. So the loop was:
+**I find the suspicious code → AI helps me understand it → I verify by reading and running it
+myself.** Asking the AI to "find the bug" cold reliably produced plausible-but-wrong answers.
+
+---
+
 ## 1. Main files and what each does
 
 | File | Responsibility |
@@ -340,6 +387,9 @@ behavior the ORM was hiding, which is the signal to stop reading and start execu
 ---
 
 ## 9. AI tools during investigation
+
+*(The top-of-document **AI usage** section is the summary; this section is the investigation-phase
+detail.)*
 
 This investigation was carried out with **Claude Code** (an agentic CLI assistant) as the AI
 tool. Being explicit about *how* it was used — and where it was wrong — is part of the honesty of
