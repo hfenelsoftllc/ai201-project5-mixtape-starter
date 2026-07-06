@@ -17,7 +17,7 @@ from services.notification_service import (
     get_notifications,
     mark_as_read,
 )
-from services.playlist_service import create_playlist
+from services.playlist_service import create_playlist, get_playlist_songs
 
 
 @pytest.fixture
@@ -85,16 +85,7 @@ def test_rate_song_invalid_score_raises(app, seed):
 
 
 # --- playlist notifications (the "working reference" path from Issue #4) ---
-#
-# NOTE: these are marked xfail because they exposed a separate, pre-existing
-# defect NOT in the five-issue brief: add_to_playlist does
-# `playlist.songs.append(song)`, but the playlist_entries association table
-# has NOT-NULL `position` and `added_by` columns the ORM append cannot supply,
-# so the insert raises IntegrityError. seed_data.py hides this by inserting
-# playlist_entries rows manually. Remove the xfail once add_to_playlist is
-# fixed to set position/added_by explicitly.
 
-@pytest.mark.xfail(reason="add_to_playlist crashes: playlist_entries.position/added_by NOT NULL", strict=True)
 def test_adding_song_to_playlist_notifies_sharer(app, seed):
     """Adding someone's song to a playlist notifies them."""
     with app.app_context():
@@ -106,13 +97,30 @@ def test_adding_song_to_playlist_notifies_sharer(app, seed):
         assert notifs[0]["type"] == "song_added_to_playlist"
 
 
-@pytest.mark.xfail(reason="add_to_playlist crashes: playlist_entries.position/added_by NOT NULL", strict=True)
 def test_adding_own_song_to_playlist_does_not_notify(app, seed):
     """Adding your own song to a playlist does not notify you."""
     with app.app_context():
         playlist = create_playlist("Mine", seed["sharer"].id)
         add_to_playlist(playlist.id, seed["song"].id, seed["sharer"].id)
         assert get_notifications(seed["sharer"].id) == []
+
+
+def test_added_songs_get_sequential_positions(app, seed):
+    """
+    add_to_playlist assigns each song the next position, so songs come back
+    in the order they were added.
+    """
+    with app.app_context():
+        song2 = Song(title="Second Song", artist="Artist", shared_by=seed["sharer"].id)
+        db.session.add(song2)
+        db.session.commit()
+
+        playlist = create_playlist("Ordered", seed["other"].id)
+        add_to_playlist(playlist.id, seed["song"].id, seed["other"].id)
+        add_to_playlist(playlist.id, song2.id, seed["other"].id)
+
+        titles = [s["title"] for s in get_playlist_songs(playlist.id)]
+        assert titles == ["Shared Song", "Second Song"]
 
 
 # --- retrieval and read-state ---
