@@ -130,6 +130,48 @@ GET  /playlists/<id>/songs     → playlist_service.get_playlist_songs()        
 
 A full route → service → model graph (Mermaid) is in [BUG_REPORT.md](BUG_REPORT.md).
 
+### Bonus finding — `add_to_playlist` (a sixth, undocumented bug)
+
+While adding test coverage for the notification service, a defect **outside the five-issue
+brief** surfaced in `notification_service.add_to_playlist` (`notification_service.py:35`), on
+the `POST /playlists/<id>/songs` path.
+
+**What the function does, step by step:**
+
+1. Local-imports `Playlist` and `get_playlist_songs` (the latter is imported but **never used** — dead code).
+2. Loads the song by id; raises `ValueError` if missing.
+3. Loads the adder (user) by id; raises `ValueError` if missing.
+4. Loads the playlist by id; raises `ValueError` if missing.
+5. If the song isn't already in the playlist, appends it via `playlist.songs.append(song)` and commits.
+6. If the adder isn't the original sharer (`song.shared_by != added_by_user_id`), creates a `song_added_to_playlist` notification for the sharer.
+
+**What it returns:** the signature is `-> None` and there is no `return` statement, so it
+**always returns `None`** on success. All outcomes are communicated through side effects (a new
+`playlist_entries` row, a new `Notification`), never through the return value. Callers rely on
+it *not raising*, not on what it returns.
+
+**What causes unexpected behavior** (here that means an exception or a missing side effect, since
+the return is hardwired to `None`):
+
+- **`IntegrityError` on a genuinely new add.** Step 5's `playlist.songs.append(song)` inserts a
+  `playlist_entries` row through the ORM relationship, but that table has NOT-NULL `position`
+  and `added_by` columns the append cannot supply → `sqlite3.IntegrityError: NOT NULL constraint
+  failed: playlist_entries.position`. The function throws before reaching the notification step.
+  `routes/playlists.py` only catches `ValueError`, so this surfaces as an unhandled 500.
+  `seed_data.py` hides it by inserting `playlist_entries` rows manually with explicit
+  `position`/`added_by`.
+- **The dedup guard silently no-ops.** `if song not in playlist.songs` means re-adding an
+  existing song does nothing — and is ironically the *only* path that avoids the `IntegrityError`,
+  because it skips the broken `append`.
+- **Non-atomic side effects.** The song-add commits *before* `create_notification` commits
+  separately, so a failure between them can leave the song added but no notification sent.
+- **No notification when you add your own song** (`song.shared_by == added_by_user_id`) — intended,
+  but worth noting for callers watching for that side effect.
+
+This bug is covered by two `xfail(strict=True)` tests in `tests/test_notifications.py`; the
+strict marker will fail the suite the moment `add_to_playlist` is fixed (set `position` to the
+next index and pass `added_by`), signaling the marker should be removed.
+
 ---
 
 ## How to Read the Code
