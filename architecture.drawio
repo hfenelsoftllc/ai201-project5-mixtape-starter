@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Three-layer stack">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Mixtape — a strict three-layer stack&#xa;(dependencies point downward only)" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="300" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="client" value="HTTP request  →  JSON response" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="360" y="35" width="280" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="L1" value="routes/  —  thin blueprints" style="swimlane;startSize=30;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#d79b00;fontStyle=1;fontColor=#7f4f00;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="130" width="880" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" value="songs.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="L1">
+          <mxGeometry x="20" y="45" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" value="playlists.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="L1">
+          <mxGeometry x="240" y="45" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" value="users.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="L1">
+          <mxGeometry x="460" y="45" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="r4" value="feed.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="L1">
+          <mxGeometry x="680" y="45" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="L2" value="services/  —  business logic + all DB access" style="swimlane;startSize=30;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#6c8ebf;fontStyle=1;fontColor=#33557f;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="880" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="streak_service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="L2">
+          <mxGeometry x="15" y="45" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="feed_service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="L2">
+          <mxGeometry x="185" y="45" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="search_service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="L2">
+          <mxGeometry x="355" y="45" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="notification_service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="L2">
+          <mxGeometry x="525" y="45" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="playlist_service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="L2">
+          <mxGeometry x="695" y="45" width="150" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="L3" value="models.py  —  SQLAlchemy ORM + to_dict()" style="swimlane;startSize=30;html=1;whiteSpace=wrap;fillColor=none;strokeColor=#82b366;fontStyle=1;fontColor=#4d6b33;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="470" width="880" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="m1" value="User · Song · Tag · ListeningEvent · Rating · Playlist · Notification&#xa;+ association tables: friendships · song_tags · playlist_entries" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="L3">
+          <mxGeometry x="20" y="45" width="840" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="db" value="SQLite&#xa;(mixtape.db)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="390" y="630" width="180" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e0" value="HTTP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="client" target="L1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="calls one service" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="L1" target="L2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="queries / ORM" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="L2" target="L3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="SQL" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="L3" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a1" value="Parse the request, call ONE service, jsonify the result. No business logic, no DB queries. A service ValueError is caught here → 4xx JSON." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontColor=#7f4f00;" vertex="1" parent="1">
+          <mxGeometry x="940" y="140" width="230" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" value="All business logic and DB access. Every bug in the hunt lived here. Validates inputs (raises ValueError), commits, and returns dicts — never ORM objects." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontColor=#33557f;" vertex="1" parent="1">
+          <mxGeometry x="940" y="310" width="230" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" value="Schema + association tables. to_dict() is the serialization boundary crossed on the way back up." style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontColor=#4d6b33;" vertex="1" parent="1">
+          <mxGeometry x="940" y="480" width="230" height="90" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

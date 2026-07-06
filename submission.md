@@ -90,6 +90,10 @@ routes/  ──►  services/  ──►  models.py  ──►  db (SQLite)
 (thin)        (business logic)   (ORM)
 ```
 
+![Mixtape — the three-layer stack: thin routes call services, which own all logic and DB access, which use the models/ORM, which read/write SQLite](architecture.png)
+
+*Source: [`architecture.drawio`](architecture.drawio) (editable in draw.io; [`architecture.svg`](architecture.svg) for a vector copy).*
+
 - **`routes/` (blueprints)** are deliberately *thin*. Each handler parses the request, calls
   exactly one service function, and `jsonify`s the result. A `ValueError` raised by a service
   is caught and mapped to a `4xx` JSON error. **No business logic and no direct DB queries live
