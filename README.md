@@ -95,6 +95,43 @@ Full issue descriptions are in the **Project 5 brief**. Read them carefully befo
 
 ---
 
+## Findings
+
+Each issue was traced from its route through the service it calls. Full write-up — with root
+causes and fix directions — is in **[BUG_REPORT.md](BUG_REPORT.md)**. Baseline test run:
+`pytest tests/` → **3 failed, 10 passed**.
+
+| # | Buggy call chain | Location | Status | Evidence |
+|---|------------------|----------|--------|----------|
+| 1 | `/songs/<id>/listen` → `record_listening_event` → `update_listening_streak` | `streak_service.py:73` | **Confirmed** | `test_streak_increments_on_sunday` fails (`assert 1 == 2`) |
+| 2 | `/feed/<id>/listening-now` → `get_friends_listening_now` | `feed_service.py:13` | **Confirmed** (no test) | `RECENT_THRESHOLD = 24h` contradicts the seed's "past 30 minutes" intent |
+| 3 | `/songs/search` → `search_songs` | `search_service.py:25` | **Latent** | join emits 3 rows for a 3-tag song, but the ORM de-dups entities to 1 — search tests pass today |
+| 4 | `/songs/<id>/rate` → `rate_song` | `notification_service.py:73` | **Confirmed** (no test) | `rate_song` never calls `create_notification`; only `add_to_playlist` does |
+| 5 | `/playlists/<id>/songs` → `get_playlist_songs` | `playlist_service.py:66` | **Confirmed** | `songs[:-1]` drops the last track; 2 playlist tests fail |
+
+**Root causes at a glance**
+
+1. A spurious `today.weekday() != 6` guard blocks a legitimate consecutive-day increment on Sundays.
+2. The "listening now" recency window is a full day (`24h`) instead of a short interval (minutes).
+3. An un-deduplicated `outerjoin` on `song_tags` fans out one row per tag — masked for now by the ORM's entity de-dup, so it's a latent risk rather than an active bug.
+4. Missing side-effect: the rate path was never wired to `create_notification` (the pattern to copy lives in `add_to_playlist`).
+5. An off-by-one slice (`songs[:-1]`) truncates the final song.
+
+### Dependency graph (buggy chains)
+
+```
+POST /songs/<id>/listen        → streak_service.record_listening_event
+                                   → update_listening_streak()                🐛 #1
+GET  /feed/<id>/listening-now  → feed_service.get_friends_listening_now()      🐛 #2
+GET  /songs/search             → search_service.search_songs()                 🐛 #3 (latent)
+POST /songs/<id>/rate          → notification_service.rate_song()              🐛 #4
+GET  /playlists/<id>/songs     → playlist_service.get_playlist_songs()          🐛 #5
+```
+
+A full route → service → model graph (Mermaid) is in [BUG_REPORT.md](BUG_REPORT.md).
+
+---
+
 ## How to Read the Code
 
 Start with `models.py` to understand the data model. Then trace a feature through from its route to its service. For example:
